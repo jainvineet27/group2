@@ -1,0 +1,27 @@
+Input Data GitHub 
+url ='https://raw.githubusercontent.com/a-forty-two/stack_route_24oct24/refs/heads/main/data.csv'
+import pandas as pd 
+df = pd.read_csv(url)
+#df.head()
+df.to_csv('data.csv')
+df.head()
+spark_df= spark.createDataFrame(df)
+display(spark_df)
+
+spark_df.printSchema()
+spark_df.write\
+        .mode('overwrite')\
+        .format('parquet')\
+        .option('header',True)\
+        .option('inferSchema',True)\
+        .option('path','dbfs:/Workspace/Shared/Group-2/data.csv/raw_data')\
+        .save()
+spark_df.createOrReplaceTempView('raw_data_view')
+spark.sql('select * from raw_data_view').display(truncate=False)
+# 
+from pyspark.sql import functions as F
+new_df = spark_df.select([F.col(column_name).alias(column_name.replace(':','').replace(' ','_').replace(',','_')) for column_name in spark_df.columns])
+new_df.display()
+new_df.write.option("mergeSchema", "true").mode("overwrite").format("delta").saveAsTable("raw_data_delta")
+%sql
+select * from raw_data_delta
