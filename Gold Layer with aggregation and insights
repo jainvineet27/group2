@@ -1,0 +1,79 @@
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import warnings 
+
+from pyspark.sql import SparkSession
+spark = SparkSession.builder.appName("Project").getOrCreate()
+
+breast_cancer_gold_df = spark.sql(f"""select * from silver.breast_cancer""")
+pandas_gold_df = breast_cancer_gold_df.toPandas()
+pandas_gold_df.describe()
+df = pandas_gold_df.copy();
+df = pd.concat([df, pd.get_dummies(df['radius_mean'], drop_first=True)], axis=1)
+df.head()
+pandas_gold_df['diagnosis'].value_counts()
+sns.countplot(data = pandas_gold_df, x = 'diagnosis', palette = 'viridis')
+plt.title("Number Of Malignant And Benign")
+plt.show()
+plt.figure(figsize=(14, 10))
+corr = pandas_gold_df.corr()
+sns.heatmap(corr, cmap='coolwarm' , annot=True, fmt=".1f")
+plt.title("Correlation Heatmap")
+plt.show()
+sns.scatterplot(x="radius_mean",y="texture_mean",hue="diagnosis",data=df);
+plt.legend(title ='Diagnosis', labels = ['Malignant', 'Benign'])
+sns.jointplot(data = df, x = 'concavity_worst',y = 'concave_points_worst', kind = 'reg', color = 'red')
+pandas_gold_df.groupby('diagnosis').mean()
+spark_final_df = spark.createDataFrame(pandas_gold_df)
+display(spark_final_df)
+# row level security 
+spark.sql(" create view breast_cancer_gold_view as  select * from spark_final_df  
+    WHEN is_account_group_member('user_id') THEN TRUE
+    ELSE total <= 100
+  END;)
+spark_final_df.createOrReplaceTempView('breast_cancer_gold_view')
+%sql
+create schema gold 
+spark_final_df.write.mode("overwrite").option("mergeSchema", "true").saveAsTable("gold.breast_cancer_insights")
+# row level security 
+spark.sql("CREATE OR REPLACE VIEW breast_cancer_gold_view AS SELECT * FROM gold.breast_cancer_insights WHERE is_account_group_member('Group-2') and diagnosis = 'Benign';")
+%sql
+select * from breast_cancer_gold_view
+%sql
+OPTIMIZE 
+gold.breast_cancer_insights
+%sql
+-- Optimize Gold Table using OPTIMIZE and ZORDER
+OPTIMIZE 
+gold.breast_cancer_insights
+ZORDER BY diagnosis
+%python
+from delta.tables import DeltaTable
+
+def write_date(spark_final_df):
+    KeyColumns = "diagnosis,perimeter_mean,fractal_dimension_mean,compactness_se"
+    joinKey = " and".join([f"t.{col} = s.{col}" for col in KeyColumns.split(",")])
+
+    target_df = DeltaTable.forName(spark, "gold.breast_cancer_insights")
+    (
+        target_df.alias("t")
+        .merge(
+            spark_final_df.alias("s"),
+            joinKey
+        )
+        .whenMatchedUpdate(set={
+            "diagnosis":"s.diagnosis",
+            "perimeter_mean":"s.perimeter_mean",
+            "fractal_dimension_mean":"s.fractal_dimension_mean",
+            "compactness_se":"s.compactness_se",
+            "concavity_se":"s.concavity_se",
+            "concave_points_se":"s.concave_points_se"
+        })
+        .whenNotMatchedInsertAll()
+        .execute()
+    )
+
+write_date(spark_final_df)
+write_date(spark_final_df)
