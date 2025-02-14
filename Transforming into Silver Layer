@@ -1,0 +1,38 @@
+Here we will be pulling data from the ingestionlayer notebook 
+Performs basics sanity checks 
+Datatype , file format  
+from pyspark.sql import SparkSession
+spark = SparkSession.builder.appName("Project").getOrCreate()
+
+breast_cancer_df = spark.sql(f"select * from bronze.breast_cancer")
+#Categorical variable conversion and drop unnecessary columns
+breast_cancer_df = breast_cancer_df.withColumn("diagnosis",F.when(breast_cancer_df.diagnosis=="M", "Malignant").otherwise("Benign")).fillna('-1')
+breast_cancer_df = breast_cancer_df.drop("Unnamed_32")
+breast_cancer_df.display()
+
+# Normalization of numerical fields.
+from pyspark.sql.functions import round
+from pyspark.sql.types import DoubleType
+from pyspark.sql import functions as F
+
+normalize_cols = [col for col, dtype in breast_cancer_df.dtypes if isinstance(breast_cancer_df.schema[col].dataType, DoubleType)]
+for column_name in normalize_cols:
+    min_val, max_val = new_df.selectExpr(f"min({column_name})", f"max({column_name})").collect()[0]
+    normalize_df = new_df.withColumn(column_name, round((F.col(column_name) - min_val) / (max_val - min_val),3))
+
+normalize_df.display()
+# Implement schema evolution and enforce data quality constraints on silver table and drop unnecessary columns
+normalize_df = normalize_df.dropDuplicates()
+spark.sql('create database if not exists silver')
+normalize_df.write.mode("overwrite").option("mergeSchema", "true").saveAsTable("silver.breast_cancer")
+spark.sql("select * from silver.breast_cancer").display()
+#  Create Dynamic Views on the Silver Table to restrict access to sensitive data.
+# lets hide diagnosis column from other tahn doctors
+spark.sql("DROP VIEW IF EXISTS silver.breast_cancer_view")
+spark.sql("CREATE VIEW silver.breast_cancer_view as select id, case when is_account_group_member('doctors') then diagnosis else '-' end as diagnosis, radius_mean, texture_mean, perimeter_mean, area_mean, smoothness_mean, compactness_mean, concavity_mean, concave_points_mean, symmetry_mean, fractal_dimension_mean, radius_se, texture_se, perimeter_se, area_se, smoothness_se, compactness_se, concavity_se, concave_points_se, symmetry_se, fractal_dimension_se, radius_worst, texture_worst, perimeter_worst, area_worst, smoothness_worst, compactness_worst, concavity_worst, concave_points_worst, symmetry_worst, fractal_dimension_worst from silver.breast_cancer")
+spark.sql("select * from silver.breast_cancer_view").display()
+# aggregation
+df = spark.sql("select * from silver.breast_cancer")
+df.describe().display()
+# Track data changes using Delta Lake’s versioning
+spark.sql("DESCRIBE HISTORY silver.breast_cancer").display()
