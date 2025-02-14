@@ -1,0 +1,29 @@
+Input Data GitHub 
+url ='https://raw.githubusercontent.com/a-forty-two/15-Jan-2025-StackRoute-Databricks-Batch4/refs/heads/main/data.csv'
+ # df = spark.read.format("csv").option("header", "true").load(url)
+import pandas as pd 
+df = pd.read_csv(url)
+df.to_csv('data.csv')
+df.head()
+spark_df= spark.createDataFrame(df)
+display(spark_df)
+
+spark_df.printSchema()
+# save data in parquete file
+spark_df.dropDuplicates().fillna('-1').write\
+        .mode('overwrite')\
+        .format('parquet')\
+        .option('header',True)\
+        .option('inferSchema',True)\
+        .option('path','dbfs:/Workspace/Shared/Group-2/data.csv/raw_data')\
+        .save()
+spark_df.dropDuplicates().fillna('-1').createOrReplaceTempView('breast_cancer_view')
+# rename column names to remove special characters
+from pyspark.sql import functions as F
+new_df = spark_df.dropDuplicates().fillna('-1').select([F.col(column_name).alias(column_name.replace(':','').replace(' ','_').replace(',','_')) for column_name in spark_df.columns])
+new_df.display()
+# create bronze delta table
+spark.sql("create database if not exists bronze")
+new_df.write.option("mergeSchema", "true").mode("overwrite").format("delta").saveAsTable("bronze.breast_cancer")
+# read from bronze table
+spark.sql("SELECT * FROM bronze.breast_cancer").display()
